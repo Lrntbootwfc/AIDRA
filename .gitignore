@@ -1,0 +1,10 @@
+# Virtual Environment
+aidra_env/
+aidra_fresh/
+aidra_final/
+venv/
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]

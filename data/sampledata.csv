@@ -1,0 +1,17 @@
+// Create Drug Nodes
+CREATE (d1:Drug {name: 'Gemcitabine'})
+CREATE (d2:Drug {name: 'Aspirin'})
+
+// Create Disease Nodes
+CREATE (s1:Disease {name: 'Rheumatoid_Arthritis'})
+CREATE (s2:Disease {name: 'Cancer'})
+
+// Create Target Nodes
+CREATE (p1:Protein {name: 'RRM1'})
+CREATE (p2:Protein {name: 'Synovial_Fibroblasts'})
+
+// Create Relationships (The Evidence)
+CREATE (d1)-[:TARGETS]->(p1)
+CREATE (p1)-[:ASSOCIATED_WITH]->(s2)
+CREATE (d1)-[:TARGETS]->(p2)
+CREATE (p2)-[:ASSOCIATED_WITH]->(s1)

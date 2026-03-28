@@ -3,6 +3,8 @@ aidra_env/
 aidra_fresh/
 aidra_final/
 venv/
+
+
 .env
 
 # Python cache

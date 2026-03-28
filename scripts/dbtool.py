@@ -21,19 +21,22 @@ class Neo4jTool:
         self.driver.close()
 
     def search_evidence(self, drug_name, disease_name):
-        # We use TOLOWER to make the search case-insensitive
-        query = (
-            "MATCH (d:Drug)-[:TARGETS]->(p:Protein)-[:ASSOCIATED_WITH]->(s:Disease) "
-            "WHERE toLower(d.name) = toLower($drug) AND toLower(s.name) = toLower($disease) "
-            "RETURN d.name as drug, p.name as protein, s.name as disease LIMIT 1"
-        )
+        query = """
+        MATCH (d:Drug)-[r1]->(p:Protein)-[r2]->(s:Disease)
+        WHERE toLower(d.name) = toLower($drug) 
+        AND toLower(s.name) = toLower($disease)
+        RETURN d.name as drug, p.name as protein, s.name as disease,
+        type(r1) as rel1, type(r2) as rel2
+        LIMIT 1
+    """
         try:
             with self.driver.session() as session:
                 result = session.run(query, drug=drug_name, disease=disease_name)
                 record = result.single()
                 if record:
-                    # Return a string that matches your main.py check "Path Found"
-                    return f"Path Found: Evidence exists through Protein {record['protein']}"
-                return "No direct path found in Knowledge Graph."
+                    return (f"Path Found: {record['drug']} "
+                        f"-[{record['rel1']}]-> {record['protein']} "
+                        f"-[{record['rel2']}]-> {record['disease']}")
+            return "No direct path found in Knowledge Graph."
         except Exception as e:
             return f"Database Connection Error: {str(e)}"

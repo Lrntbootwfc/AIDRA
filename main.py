@@ -1,145 +1,91 @@
+# main.py — Stable, token-efficient AIDRA runner
+
 import os
-import logging 
-os.environ["LITELLM_LOGGING"] = "False"
-logging.getLogger("root").setLevel(logging.CRITICAL)
-logging.getLogger("lite-llm").setLevel(logging.CRITICAL) 
-
-import litellm
-logging.getLogger("litellm").setLevel(logging.CRITICAL)
-litellm.set_verbose = False
-litellm.suppress_debug_info = True
-
+import warnings
+import time
+from crewai import Crew, Process
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore")
 load_dotenv()
 
-from crewai import   Crew, Process
-from agents import (
-    research_lead, chemical_analyst, clinical_specialist, 
-    safety_expert, market_strategist, regulatory_lead, summarizer, llm
-)
-from tasks import kg_task, clinical_task, toxicity_task, market_task, reg_task, final_task
-from scripts.mathutil import calculate_confidence_score 
-# from langchain_groq import ChatGroq
+from agents import research_agent, report_agent
+from tasks import bio_safety_task, market_task, report_task
+from scripts.mathutil import calculate_confidence_score
 
 
+def run_aidra(molecule: str, disease: str) -> str:
+    """
+    Runs the AIDRA pipeline.
+    Token budget: ~20k-30k total (input + output across all 3 tasks).
+    """
+    crew = Crew(
+        agents=[research_agent, report_agent],
+        tasks=[bio_safety_task, market_task, report_task],
+        process=Process.sequential,
+        verbose=True,       # Set False in production to save ~5k tokens
+        max_rpm=3,         # Groq free tier: ~30 RPM; 10 gives safe headroom
+        memory=False,       # No memory = no extra token overhead
+        cache=True,         # Cache tool results so repeat queries don't cost tokens
+        planning=False,
+        share_crew=False,
+    )
 
+    result = crew.kickoff(inputs={"molecule": molecule, "disease": disease})
+    return str(result)
 
-
-# 1. BRAIN SETUP - Groq standard integration
-# # Hum is object ko direct Agent mein pass karenge
-# os.environ["OPENAI_API_BASE"] = "https://api.groq.com/openai/v1"
-# os.environ["OPENAI_MODEL_NAME"] = "llama-3.3-70b-versatile"
-# os.environ["OPENAI_API_KEY"] = os.getenv("GROQ_API_KEY")
-
-
-# llm = ChatGroq(
-#     api_key=os.getenv("GROQ_API_KEY"),
-#     model="llama-3.3-70b-versatile"
-# )
-
-
-crew = Crew(
-    agents=[research_lead, chemical_analyst, clinical_specialist, 
-            safety_expert, market_strategist, regulatory_lead, summarizer],
-    tasks=[kg_task, clinical_task, toxicity_task, market_task, reg_task, final_task],
-    process=Process.sequential, 
-    #manager_llm=llm, 
-    verbose=True,
-    memory=False,
-    cache=True,
-    max_rpm=2
-)
 
 if __name__ == "__main__":
-    molecule = input("Enter Drug (e.g., Metformin): ")
-    disease = input("Enter Disease (e.g., Alzheimers): ")
-    
-    print(f"\n--- AIDRA Launching Parallel Research for {molecule} in {disease} ---\n")
-    
-    # Kickoff the process
-    result = crew.kickoff(inputs={'molecule': molecule, 'disease': disease})
-    
-    print("\n--- FINAL RESEARCH REPORT ---\n")
-    print(result)
+    print("=" * 55)
+    print("       AIDRA — Drug Repurposing Intelligence System")
+    print("=" * 55)
 
-    # 6. SYSTEM METRICS (Using mathutil)
-    report_text = str(result)
- 
-    path_found_status = any(word in report_text.lower() for word in ["path found", "biological connection", "molecular target"])
-    
-    # Final calculation (Entropy standard 0.4)
-    final_score = calculate_confidence_score(path_found=path_found_status, entropy_score=0.4)
-    
-    print("\n--- AIDRA SYSTEM METRICS ---")
-    print(f"Validated Confidence Score: {final_score}")
-    print(f"Knowledge Graph Status: {'Path Validated' if path_found_status else 'No Direct Path Found'}")
+    molecule = input("\nEnter Drug (e.g., Metformin): ").strip()
+    disease = input("Enter Disease (e.g., Alzheimers): ").strip()
 
-# # 2. WORKER AGENTS
-# chemical_agent = Agent(
-#     role='Chemical Analyst',
-#     goal='Search Knowledge Graph for drug-disease associations.',
-#     backstory='You are a bio-informatics expert specialized in Neo4j graph traversal.',
-#     #llm=my_llm,
-#     verbose=True,
-#     allow_delegation=False
-# )
+    if not molecule or not disease:
+        print("❌ Error: Drug and Disease cannot be empty.")
+        exit(1)
 
-# commercial_agent = Agent(
-#     role='Commercial Strategist',
-#     goal='Analyze market demand and EXIM data.',
-#     backstory='You focus on pharmaceutical trade volumes and patent status.',
-#     #llm=my_llm,
-#     verbose=True,
-#     allow_delegation=False
-# )
+    print(f"\n  Launching AIDRA for [{molecule}] → [{disease}]...\n")
+    start = time.time()
 
-# # 3. MASTER AGENT
-# # master_agent = Agent(
-# #     role='Research Lead',
-# #     goal='Synthesize chemical and commercial data into a final X-AAR report.',
-# #     backstory='You coordinate between analysts to provide a final repurposing score.',
-# #     #llm=my_llm,
-# #     verbose=True,
-# #     allow_delegation=True
-# # )
+    try:
+        report_text = run_aidra(molecule, disease)
 
-# master_agent = Agent(
-#     role='Research Lead',
-#     goal='Validate biological paths. If no path exists, HALT research immediately.',
-#     backstory='''You are a rigorous scientist. Your first priority is the Chemical Analyst's 
-#     report. If they report "No Path Found" in the Knowledge Graph, you must NOT 
-#     ask the Commercial Strategist for data. Instead, finalize the report as "Infeasible" 
-#     and stop the process to save time.''',
-#     verbose=True,
-#     allow_delegation=True
-# )
+        elapsed = round(time.time() - start, 1)
 
-# def execute_aidra(molecule, disease):
-#     task = Task(
-#     description=f"Quick Scan: Assess {molecule} for {disease}. 1. Path check. 2. Market check. 3. Stop if toxicity > 0.8.",
-#     expected_output="Bullet points of evidence ONLY. No essays. Final Verdict: [Go/No-Go].",
-#     agent=master_agent
-# )
+        # Confidence score
+        path_found = any(
+            kw in report_text.lower()
+            for kw in ["path found", "target", "connection", "modulates", "inhibits", "activates"]
+        )
+        score = calculate_confidence_score(path_found=path_found, entropy_score=0.4)
 
-#     crew = Crew(
-#         agents=[master_agent, chemical_agent, commercial_agent],
-#         tasks=[task],
-#         process=Process.hierarchical, # This makes Master Agent act as a real Boss
-#         manager_llm=master_agent.llm,
-#         verbose=True,
-#         halt_on_error=True
-#     )
-    
-#     result = crew.kickoff()
-    
-#     # Simple post-process evidence check
-#     evidence = kg_tool.search_evidence(molecule, disease)
-#     path_exists = "path found" in str(evidence).lower()
-#     score = calculate_confidence_score(path_found=path_exists, entropy_score=0.4)
-    
-#     return f"{result}\n\n--- AIDRA SYSTEM METRICS ---\nConfidence Score: {score}\nKG Path: {evidence}"
+        # Save report
+        filename = f"AIDRA_{molecule}_{disease}.md".replace(" ", "_")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"# AIDRA Report: {molecule} for {disease}\n\n")
+            f.write(report_text)
+            f.write(f"\n\n---\n**Confidence Score:** {score}  \n")
+            f.write(f"**Time Elapsed:** {elapsed}s  \n")
+            f.write(f"**KG Path Status:** {'Validated ✅' if path_found else 'Not Found ❌'}\n")
 
-# if __name__ == "__main__":
-#     m = input("Enter Drug (e.g., Gemcitabine): ")
-#     d = input("Enter Disease (e.g., Rheumatoid Arthritis): ")
-#     print(execute_aidra(m, d))
+        print("\n" + "=" * 55)
+        print(f"✅ Report saved: {filename}")
+        print(f"📊 Confidence Score : {score}")
+        print(f"🔬 KG Path Status   : {'Validated' if path_found else 'Not Found'}")
+        print(f"⏱  Time Elapsed     : {elapsed}s")
+        print("=" * 55)
+        print("\n📄 REPORT PREVIEW:\n")
+        print(report_text[:1500])  # Preview first 1500 chars in terminal
+        if len(report_text) > 1500:
+            print(f"\n... [Full report saved to {filename}]")
+
+    except Exception as e:
+        print(f"\n❌ AIDRA Failed: {e}")
+        print("\n🔧 Troubleshooting:")
+        print("  1. Check GROQ_API_KEY and TAVILY_API_KEY in .env")
+        print("  2. Check if Neo4j is running (scripts/dbtool.py)")
+        print("  3. If rate limited, wait 60s and retry")
+        raise

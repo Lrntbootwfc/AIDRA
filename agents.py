@@ -1,132 +1,121 @@
 import os
-import requests
 from crewai import Agent, LLM
-from crewai.tools import BaseTool          # ✅ Use CrewAI's BaseTool
-from pydantic import Field
+from crewai.tools import BaseTool
 from scripts.dbtool import Neo4jTool
-from langchain_community.tools import DuckDuckGoSearchRun
-
+from langchain_community.tools.tavily_search import TavilySearchResults
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ✅ LLM: stop[] REMOVED — ye hi empty response ka main culprit tha
 llm = LLM(
-    # model="groq/llama-3.1-8b-instant",
-    model="groq/llama-3.3-70b-versatile",  # ✅ Provider prefix required
-    api_key=os.getenv("GROQ_API_KEY")
+    model="groq/llama-3.1-8b-instant",
+#    model="groq/llama-3.3-70b-versatile",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.1,   # Low = deterministic, less hallucination
+    max_tokens=300,     
+    timeout=90,
 )
 
-# --- 1. NEO4J TOOL (CrewAI-compatible) ---
-class KnowledgeGraphTool(BaseTool):
-    name: str = "knowledge_graph_tool"
-    description: str = "Search Neo4j for biological paths between Drug and Disease. Input format: 'drug_name|disease_name' e.g. 'metformin|alzheimers'"
+
+class KGSearchTool(BaseTool):
+    name: str = "internal_knowledge_tool"
+    description: str = (
+        "Query Neo4j knowledge graph for biological paths. "
+        "Input format: 'molecule|disease' e.g. 'Metformin|Alzheimers'"
+    )
 
     def _run(self, input_str: str) -> str:
         try:
-            from scripts.dbtool import Neo4jTool
             db = Neo4jTool()
-            
-            # Parse "drug|disease" format
-            if "|" in input_str:
-                parts = input_str.split("|")
-                drug = parts[0].strip()
-                disease = parts[1].strip()
-            else:
-                # fallback: treat whole string as drug, use generic disease
-                drug = input_str.strip()
-                disease = ""
-            
-            result = db.search_evidence(drug, disease)  # ✅ correct method
+            parts = input_str.split("|") if "|" in input_str else [input_str, ""]
+            result = db.search_evidence(parts[0].strip(), parts[1].strip())
             db.close()
-            return result
+            # Cap output to save tokens
+            return str(result)[:600] if result else "No direct path found in knowledge graph."
         except Exception as e:
-            return f"Database Error: {str(e)}"
-
-kg_tool_wrapper = KnowledgeGraphTool()
+            return f"DB unavailable: {str(e)[:100]}"
 
 
-class FreeSearchTool(BaseTool):
-    name: str = "internet_search"
-    description: str = "Search the internet for real-time drug data, clinical trials, and market info. No API key needed."
+class WebSearchTool(BaseTool):
+    name: str = "web_search"
+    description: str = (
+        "Search web for pharmaceutical data. "
+        "Input: plain keyword string, max 5 words. Example: 'Metformin Alzheimers clinical trials 2024'"
+    )
 
-    def _run(self, search_query: str) -> str:
+    def _run(self, query: str) -> str:
         try:
-            ddg = DuckDuckGoSearchRun()
-            return ddg.run(search_query)
+            # Input sanitization
+            if isinstance(query, dict):
+                query = " ".join(str(v) for v in query.values())
+            # Remove special chars that break JSON parsing
+            query = str(query).translate(str.maketrans("", "", '"{}[]\\'))
+            query = " ".join(query.split()[:6])  # Max 6 words
+
+            tavily = TavilySearchResults(
+                api_key=os.getenv("TAVILY_API_KEY"),
+                search_depth="basic",   # 'basic' = fewer tokens than 'advanced'
+                max_results=2           # Only 2 results to save tokens
+            )
+            raw = tavily.run(query)
+
+            if not raw:
+                return "No web results. Use internal knowledge."
+
+            # Extract and cap content
+            output = ""
+            for item in raw:
+                content = item.get("content", "")[:400]
+                url = item.get("url", "")
+                output += f"Source: {url}\n{content}\n\n"
+
+            return output[:900]  # Hard cap on total web output
+
         except Exception as e:
-            return f"Search failed, using internal knowledge. Error: {str(e)}"
-
-internet_search = FreeSearchTool()
+            return f"Web search failed. Use internal knowledge. Error: {str(e)[:80]}"
 
 
-# --- 4. AGENTS DEFINITION ---
+# Tool instances
+kg_tool = KGSearchTool()
+web_tool = WebSearchTool()
 
-research_lead = Agent(
-    role="Chief Research Officer",
-    goal="Oversee the entire drug repurposing pipeline for {molecule} in {disease}.",
-    backstory="Strategic lead. If no biological path exists, you HALT.",
+# ─────────────────────────────────────────────
+# AGENTS — Only 2, each handling multiple tasks
+# This is the biggest token-saver vs 4-8 agents
+# ─────────────────────────────────────────────
+
+research_agent = Agent(
+    role="Drug Repurposing Researcher",
+    goal=(
+        "For {molecule} in {disease}: find biological paths, clinical trial evidence, "
+        "patents, safety profile, and EXIM/market data. Be factual and concise."
+    ),
+    backstory=(
+        "Senior pharmaceutical scientist with expertise in drug repurposing. "
+        "You report only verified facts in bullet points. No fluff."
+    ),
+    tools=[kg_tool, web_tool],
     llm=llm,
-    allow_delegation=True,
-    max_iter=5,
-    max_retry_limit=2
+    max_iter=4,
+    max_retry_limit=1,  # 1 retry only — prevents token waste on repeated failures
+    verbose=False,      # CRITICAL: verbose=False saves ~30% tokens
+    allow_delegation=False,
+    cache=False,
 )
 
-chemical_analyst = Agent(
-    role="Lead Bioinformatics Scientist",
-    goal="Find molecular targets for {molecule} in {disease}.",
-    backstory="Expert in Neo4j. You find Drug -> Protein -> Disease paths.",
-    tools=[kg_tool_wrapper],   # ✅ Now a CrewAI BaseTool instance
+report_agent = Agent(
+    role="Scientific Report Writer",
+    goal="Compile all research into a structured 6-section markdown report with Go/No-Go verdict.",
+    backstory=(
+        "Technical writer who synthesizes pharmaceutical research into clear, "
+        "data-rich reports. Every section must have at least one concrete data point."
+    ),
+    tools=[],           # No tools — only synthesis, saves tokens
     llm=llm,
-    max_iter=3,        # ✅ stop after 3 attempts
+    max_iter=2,
     max_retry_limit=1,
-    
-)
-
-clinical_specialist = Agent(
-    role="Clinical Trials Analyst",
-    goal="Search for existing trials of {molecule}.",
-    backstory="Master of PubMed. You find clinical evidence.",
-    tools=[internet_search],
-    llm=llm,
-    max_iter=3,
-    max_retry_limit=1
-)
-
-safety_expert = Agent(
-    role="Toxicology Lead",
-    goal="Assess toxicity of {molecule}.",
-    backstory="You evaluate if the drug is safe for humans.",
-    tools=[internet_search],
-    llm=llm,
-    max_iter=3,
-    max_retry_limit=1
-)
-
-market_strategist = Agent(
-    role="Commercial Viability Lead",
-    goal="Analyze market size and competitors.",
-    backstory="Business expert in pharmaceuticals.",
-    tools=[internet_search],
-    llm=llm,
-    max_iter=3,
-    max_retry_limit=1
-)
-
-regulatory_lead = Agent(
-    role="FDA Regulatory Consultant",
-    goal="Evaluate legal pathways for {molecule}.",
-    backstory="Expert in 505(b)(2) regulatory pathways.",
-    tools=[internet_search],
-    llm=llm,
-    max_iter=3,
-    max_retry_limit=1
-    
-)
-
-summarizer = Agent(
-    role="Scientific Technical Writer",
-    goal="Synthesize all findings into a final AIDRA report.",
-    backstory="Final gatekeeper and report writer.",
-    llm=llm,
-    max_iter=3,
-    max_retry_limit=1
+    verbose=False,
+    allow_delegation=False,
+    cache=False,
 )

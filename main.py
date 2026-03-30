@@ -1,10 +1,8 @@
-# main.py — Hybrid Architecture
-# Phase 1: Data collection via direct Python calls (ZERO LLM tokens)
-# Phase 2: Report via single 70b API call (~700 tokens only)
-# Total token usage per report: ~700-900 tokens
+
 
 import os
 import re
+import sys
 import time
 import warnings
 import requests
@@ -148,6 +146,20 @@ Write EXACTLY in this format (each section max 60 words):
 
     raise RuntimeError("Failed after 3 retries.")
 
+def run_research(molecule, disease):
+    data = collect_all_data(molecule, disease)
+    report_text = generate_report(molecule, disease, data)
+    
+    # Calculate confidence score for the response
+    path_found = any(kw in data["kg_path"].lower() for kw in ["path found", "modulates", "inhibits", "target"])
+    score = calculate_confidence_score(path_found=path_found, entropy_score=0.4)
+    
+    return {
+        "report": report_text,
+        "confidence": score,
+        "kg_status": "Validated ✅" if path_found else "Not Found ❌"
+    }
+
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
@@ -163,8 +175,26 @@ if __name__ == "__main__":
         print("❌ Drug aur Disease dono required hain.")
         exit(1)
 
-    print(f"\n🚀 Launching AIDRA: [{molecule}] → [{disease}]\n")
-    print("ℹ️  Phase 1 — Data collection (zero LLM tokens)")
+    print(f"\n  Launching AIDRA: [{molecule}] → [{disease}]\n")
+    print("ℹ️  Phase 1 — Data collection ")
+    
+    
+    
+    db = Neo4jTool()
+    kg_path = db.search_evidence(molecule, disease )
+
+    if kg_path is None:
+        print("\n" + "="*55)
+        print("🔬 KG Path : Not Found ❌")
+        print("⚠️  Stopping AIDRA: No biological evidence to write a report.")
+        print("💡 Token Saving: Phase 2 (LLM Report) cancelled.")
+        print("="*55)
+        sys.exit(0) # 🚀 Yahan exit ho jayega, aage ka code nahi chalega
+
+# Agar path mila, tabhi Phase 2 chalu hoga
+    print(f"🔬 KG Path : Found ✅ ({kg_path})") 
+    
+    
     print("ℹ️  Phase 2 — Report writing  (~700 tokens, 1 call)\n")
     start = time.time()
 

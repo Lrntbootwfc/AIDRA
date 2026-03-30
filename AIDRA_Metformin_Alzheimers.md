@@ -1,24 +1,24 @@
 # AIDRA Report: Metformin for Alzheimers
 
 ## 1. Biological Pathway
-Metformin modulates Abeta_42, associated with Alzheimer's.
+Error in biological pathway data.
 
 ## 2. Clinical Evidence
-No specific trials mentioned, randomized 1:1 ratio.
+MAP phase II/III RCT, 326 participants.
 
 ## 3. Safety Profile
-Lactic acidosis, hypoglycaemia, and GI side effects.
+LD50: 1,770 mg/kg, hypoactivity, ataxia, tremors.
 
 ## 4. Market Analysis
-USD 30.8 Billion by 2033, 18.8% CAGR.
+USD 30.8 Billion, 18.8% CAGR.
 
 ## 5. Patent Status
-Expired, generic available, e.g., GLUCOPHAGE XR.
+Expired, generic available.
 
 ## 6. Final Verdict
-GO ✅ Metformin's potential in Alzheimer's treatment warrants further investigation.
+GO ✅ Metformin shows potential for Alzheimer's treatment with a growing market.
 
 ---
 **Confidence Score:** 0.95  
-**KG Path:** Validated ✅  
-**Time:** 19.5s
+**KG Path:**  Path Found 
+**Time:** 15.4s

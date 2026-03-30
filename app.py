@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
-from main import run_research # Aapka modular engine call karega
+from main import run_research  
 
 app = FastAPI(title="AIDRA Pharmaceutical Intelligence API")
 
@@ -30,12 +30,10 @@ async def start_research(request: ResearchRequest):
     Frontend se jab 'Start Research' button dabega, ye trigger hoga.
     """
     try:
-        # 1. Engine Run (main.py ka logic call ho raha hai)
-        # Note: Llama-3.3-70b versatile quota refill check zaroori hai
+        
         report_output = run_research(request.molecule, request.disease)
         
-        # 2. Response Structure for Dashboard
-        # Full report string return karega jo Markdown support karta hai
+        
         return {
             "success": True,
             "molecule": request.molecule,
